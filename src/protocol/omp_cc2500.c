@@ -15,8 +15,7 @@
 #include "interface.h"
 #include "mixer.h"
 #include "config/model.h"
-#include "config/tx.h" // for Transmitter
-// #include "protocol/iface_xn297emu.h"
+#include "config/tx.h"  // for Transmitter
 
 #ifdef PROTO_HAS_CC2500
 
@@ -27,11 +26,11 @@
 #define dbgprintf printf
 #else
 #define OMP_BIND_COUNT      100
-#define OMP_PACKET_PERIOD   5000 // Timeout for callback in uSec
-//printf inside an interrupt handler is really dangerous
-//this shouldn't be enabled even in debug builds without explicitly
-//turning it on
-#define dbgprintf if(0) printf
+#define OMP_PACKET_PERIOD   5000  // Timeout for callback in uSec
+// printf inside an interrupt handler is really dangerous
+// this shouldn't be enabled even in debug builds without explicitly
+// turning it on
+#define dbgprintf if (0) printf
 #endif
 
 #define OMP_PACKET_SIZE           16
@@ -69,7 +68,7 @@ static u8 calibration[OMP_NUM_RF_CHANNELS];
 static u8 calibration_fscal2;
 static u8 calibration_fscal3;
 static s8 fine;
-static u8 telm_req=0;
+static u8 telm_req = 0;
 static u16 tx_wait = 0;
 
 enum{
@@ -86,7 +85,7 @@ enum {
     CHANNEL4,
     CHANNEL5,
     CHANNEL6,
-    CHANNEL7,  
+    CHANNEL7,
 };
 
 // Bit vector from bit position
@@ -127,7 +126,7 @@ static void calibrate_rf_chans()
 static void OMP_init()
 {
     // setup cc2500 for xn297L@250kbps emulation, scrambled, crc enabled
-    XN297L_Configure(XN297L_SCRAMBLED, XN297L_CRC, OMP_PACKET_SIZE+10);  // packet_size + 5byte address + 2 byte pcf + 2byte crc + 1byte preamble 
+    XN297L_Configure(XN297L_SCRAMBLED, XN297L_CRC, OMP_PACKET_SIZE+10);  // packet_size + 5byte address + 2 byte pcf + 2byte crc + 1byte preamble
     calibrate_rf_chans();
     CC2500_SetPower(tx_power);
 }
@@ -135,24 +134,24 @@ static void OMP_init()
 static void OMP_initialize_txid()
 {
     u32 lfsr = 0xb2c54a2ful;
-    u8 i,j;
-    
+    u8 i, j;
+
     if (Model.fixed_id) {
        for (i = 0, j = 0; i < sizeof(Model.fixed_id); ++i, j += 8)
            rand32_r(&lfsr, (Model.fixed_id >> j) & 0xff);
     }
     // Pump zero bytes for LFSR to diverge more
     for (i = 0; i < sizeof(lfsr); ++i) rand32_r(&lfsr, 0);
-    
-    for(i=0, j=0; i<4; i++, j+=8)
+
+    for (i=0, j=0; i < 4; i++, j+=8)
         rx_tx_addr[i] = (lfsr >> j) & 0xff;
-    
+
     rand32_r(&lfsr, 0);
     rx_tx_addr[4] = lfsr & 0xff;
     u8 tmp = (rx_tx_addr[4] & 0x07) +1;
-    //channels
-    for( i=0;i<OMP_NUM_RF_CHANNELS;i++)
-        hopping_frequency[i]=(i+3+tmp)*5+tmp;
+    // channels
+    for (i=0; i < OMP_NUM_RF_CHANNELS; i++)
+        hopping_frequency[i] = (i+3+tmp)*5+tmp;
 }
 
 static void omp_update_telemetry()
@@ -216,7 +215,7 @@ static void omp_update_telemetry()
     CC2500_SetTxRxMode(TXRX_OFF);
 
     if (update) {
-        while(*update) {
+        while (*update) {
             TELEMETRY_SetUpdated(*update++);
         }
     }
@@ -272,8 +271,8 @@ static void OMP_send_packet(u8 bind)
 
     XN297L_WriteEnhancedPayload(packet, OMP_PACKET_SIZE, telm_req != 0);   // ack/8packet
 
-    if (tx_power != Model.tx_power) // Keep transmit power updated
-    { 
+    if (tx_power != Model.tx_power)  // Keep transmit power updated
+    {
         tx_power = Model.tx_power;
         CC2500_SetPower(tx_power);
     }
@@ -288,19 +287,19 @@ static u16 OMP_callback()
         fine = (s8)Model.proto_opts[PROTOOPTS_FREQFINE];
         CC2500_WriteReg(CC2500_0C_FSCTRL0, fine);
     }
-    switch(phase) {
+    switch (phase) {
         case OMP_BIND:
             if (bind_counter == 0)
-            {
-                PROTOCOL_SetBindState(0);
-                XN297L_SetTXAddr(rx_tx_addr, 5);
-                phase = OMP_DATA;
-            }
+                {
+                    PROTOCOL_SetBindState(0);
+                    XN297L_SetTXAddr(rx_tx_addr, 5);
+                    phase = OMP_DATA;
+                }
             else
-            {
-                OMP_send_packet(1);
-                bind_counter--;
-	        }
+                {
+                    OMP_send_packet(1);
+                    bind_counter--;
+                }
             break;
 
         case OMP_DATA:
@@ -356,35 +355,35 @@ static void initialize(u8 bind)
     OMP_initialize_txid();
     tx_power = Model.tx_power;
     OMP_init();
-    fine = (s8)Model.proto_opts[PROTOOPTS_FREQFINE];        
+    fine = (s8)Model.proto_opts[PROTOOPTS_FREQFINE];
     CC2500_WriteReg(CC2500_0C_FSCTRL0, fine);
-    if(bind)
-    {
-        bind_counter = OMP_BIND_COUNT;
-        PROTOCOL_SetBindState(OMP_BIND_COUNT * OMP_PACKET_PERIOD / 1000);
-        phase = OMP_BIND;
-	    XN297L_SetTXAddr((u8 *)"FLPBD", 5);
-	    XN297L_SetChannel(OMP_RF_BIND_CHANNEL);
-        CC2500_Strobe(CC2500_SCAL);
-        usleep(900);
-        CC2500_Strobe(CC2500_SIDLE);
-        memset(packet, 0x00, OMP_PACKET_SIZE );
-        memcpy(packet,"BND",3);
-	    memcpy(&packet[3],rx_tx_addr,5);
-	    memcpy(&packet[8],hopping_frequency,8);
-    }
+    if (bind)
+        {
+            bind_counter = OMP_BIND_COUNT;
+            PROTOCOL_SetBindState(OMP_BIND_COUNT * OMP_PACKET_PERIOD / 1000);
+            phase = OMP_BIND;
+            XN297L_SetTXAddr((u8*)"FLPBD", 5);
+            XN297L_SetChannel(OMP_RF_BIND_CHANNEL);
+            CC2500_Strobe(CC2500_SCAL);
+            usleep(900);
+            CC2500_Strobe(CC2500_SIDLE);
+            memset(packet, 0x00, OMP_PACKET_SIZE);
+            memcpy(packet, "BND", 3);
+            memcpy(&packet[3], rx_tx_addr, 5);
+            memcpy(&packet[8], hopping_frequency, 8);
+        }
     else
-    {
-        XN297L_SetTXAddr(rx_tx_addr, 5);
-        phase = OMP_DATA;
-    }
+        {
+            XN297L_SetTXAddr(rx_tx_addr, 5);
+            phase = OMP_DATA;
+        }
 
     CLOCK_StartTimer(OMP_PACKET_PERIOD, OMP_callback);
 }
 
 uintptr_t OMP_Cmds(enum ProtoCmds cmd)
 {
-    switch(cmd) {
+    switch (cmd) {
         case PROTOCMD_INIT:  initialize(0); return 0;
         case PROTOCMD_DEINIT:
         case PROTOCMD_RESET:
@@ -396,9 +395,9 @@ uintptr_t OMP_Cmds(enum ProtoCmds cmd)
         case PROTOCMD_DEFAULT_NUMCHAN: return 7;
         case PROTOCMD_CURRENT_ID: return Model.fixed_id;
         case PROTOCMD_GETOPTIONS: return (uintptr_t)omp_opts;
-        case PROTOCMD_TELEMETRYSTATE: 
+        case PROTOCMD_TELEMETRYSTATE:
             return (Model.proto_opts[PROTOOPTS_TELEMETRY] != TELEM_OFF ? PROTO_TELEM_ON : PROTO_TELEM_OFF);
-        case PROTOCMD_TELEMETRYTYPE: 
+        case PROTOCMD_TELEMETRYTYPE:
             return TELEM_DEVO;
         case PROTOCMD_CHANNELMAP: return AETRG;
         default: break;
