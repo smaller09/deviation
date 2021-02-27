@@ -515,6 +515,54 @@ u8 XN297_ReadEnhancedPayload(u8* msg, int len)
     }
     return pcf_size;
 }
+
+u8 XN297_ReadEnhancedPayload(u8* msg, u8 len)
+{ //!!! Don't forget do a +2 and if using CRC add +4 on any of the used NRF24L01_11_RX_PW_Px !!!
+	u8 buffer[32];
+	u8 pcf_size; // pcf payload size
+	if (xn297_crc)
+		NRF24L01_ReadPayload(buffer, len+4);	// Read pcf + payload + CRC 
+	else
+		NRF24L01_ReadPayload(buffer, len+2);	// Read pcf + payload
+	pcf_size = buffer[0];
+	if(xn297_scramble_enabled)
+		pcf_size ^= xn297_scramble[xn297_addr_len];
+	pcf_size = pcf_size >> 1;
+	for(int i=0; i<len; i++)
+	{
+		msg[i] = bit_reverse((buffer[i+1] << 2) | (buffer[i+2] >> 6));
+		if(xn297_scramble_enabled)
+			msg[i] ^= bit_reverse((xn297_scramble[xn297_addr_len+i+1] << 2) | 
+								  (xn297_scramble[xn297_addr_len+i+2] >> 6));
+	}
+
+	if (!xn297_crc)
+		return pcf_size;	// No CRC so OK by default...
+
+	// Calculate CRC
+	u16 crc = 0xb5d2;
+	//process address
+	for (u8 i = 0; i < xn297_addr_len; ++i)
+	{
+		u8 b_in=xn297_rx_addr[xn297_addr_len-i-1];
+		if(xn297_scramble_enabled)
+			b_in ^=  xn297_scramble[i];
+		crc = crc16_update(crc, b_in, 8);
+	}
+	//process payload
+	for (uint8_t i = 0; i < len+1; ++i)
+		crc = crc16_update(crc, buffer[i], 8);
+	crc = crc16_update(crc, buffer[len+1] & 0xc0, 2);
+	//xorout
+	if (xn297_scramble_enabled)
+		crc ^= pgm_read_word(&xn297_crc_xorout_scrambled_enhanced[xn297_addr_len-3+len]);
+
+	u16 crcxored=(buffer[len+1]<<10)|(buffer[len+2]<<2)|(buffer[len+3]>>6) ;
+	if( crc == crcxored)
+		return pcf_size;	// CRC  OK
+	return 0;				// CRC NOK
+}
+
 //
 // End of XN297 emulation
 ///////////////////////////
