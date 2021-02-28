@@ -17,7 +17,6 @@
 #include "config/model.h"
 #include "config/tx.h"  // for Transmitter
 
-
 #ifdef PROTO_HAS_CC2500
 
 #ifdef EMULATOR
@@ -42,24 +41,18 @@
 
 static const char * const omp_opts[] = {
   _tr_noop("Freq-Fine"),  "-127", "127", NULL,
-  _tr_noop("Telemetry"), _tr_noop("On"), _tr_noop("Off"), NULL,
   NULL
 };
 
 enum {
     PROTOOPTS_FREQFINE = 0,
-    PROTOOPTS_TELEMETRY,
     LAST_PROTO_OPT,
 };
 
 ctassert(LAST_PROTO_OPT <= NUM_PROTO_OPTS, too_many_protocol_opts);
 
-#define TELEM_ON  0
-#define TELEM_OFF 1
-
-
 static u8 tx_power;
-static u8 packet[32];
+static u8 packet[16];
 static u8 hopping_frequency_no = 0;
 static u8 rx_tx_addr[5];
 static u8 hopping_frequency[OMP_NUM_RF_CHANNELS];
@@ -74,7 +67,7 @@ static u16 tx_wait = 0;
 static u8 nrf_installed = 0;
 static u8 last_good_v_lipo = 0;
 static u8 telemetry_counter;
-static u8 telem_packet_count =0;
+static u8 telem_packet_count = 0;
 
 enum{
     OMP_BIND,
@@ -177,104 +170,53 @@ static void omp_update_telemetry()
 // packet_in = 01 00 98 2C 03 19 19 F0 49 02 00 00 00 00 00 00
 // all bytes are fixed and unknown except 2 and 3 which represent the battery voltage: packet_in[3]*256+packet_in[2]=lipo voltage*100 in V
     const u8 *update = NULL;
-    static const u8 omp_telem[] = { TELEM_DEVO_VOLT1, TELEM_DEVO_RPM2, 0 };  // use TELEM_DEVO_RPM2 for LQI
+    static const u8 omp_telem[] = { TELEM_DEVO_VOLT1, TELEM_DEVO_RPM1, 0};  // use TELEM_DEVO_RPM1 for LQI
 
     // raw receive data    first byte should be 0x55 (last xn297l preamble word) and then 5 byte address
-    u8 telem_pkt[26];  // unscramble data
-    u8 pid;
-    u8 ack;
-    u8 pkt_len;
-    u8 i;
-    switch (nrf_installed)
-    {
-        case 0:
-            u8 rx_fifo = CC2500_ReadReg(CC2500_3B_RXBYTES | CC2500_READ_BURST) & 0x7F;
-            if (rx_fifo == 26)
-                CC2500_ReadData(packet, rx_fifo);
-            for ( i = 0; i < OMP_ADDR_LEN; ++i )   // xn297l addr(5)
-                telem_pkt[OMP_ADDR_LEN-1-i] = packet[i+1] ^ xn297_scramble[i];
-
-            for ( i = OMP_ADDR_LEN; i< 23; i++ )  // unscramble pcf(2) payload(16)
-                telem_pkt[i] = packet[i+1] ^ xn297_scramble[i];
-
-            pkt_len = telem_pkt[OMP_ADDR_LEN] >> 1;  // payload len, pid and ack
-            pid = ((telem_pkt[OMP_ADDR_LEN] & 0x01) << 1)|(telem_pkt[OMP_ADDR_LEN+1] >> 7);
-            ack = (telem_pkt[OMP_ADDR_LEN+1] >> 6)&0x01;
-
-            telem_pkt[OMP_ADDR_LEN] = pkt_len;
-
-            for (u8 i = OMP_ADDR_LEN+1; i <= OMP_ADDR_LEN+16; i++ )   // regroup payload
-                telem_pkt[i] = bit_reverse(telem_pkt[i] << 2 | telem_pkt[i+1] >> 6);
-
-            telem_pkt[22] = pid | (ack << 4);
-
-            u16 crc = 0xb5d2;
-            for ( i = 1; i < 26; ++i)
-                crc = crc16_update(crc, packet[i], 8);
-            u16 crcxored = crc16_update(crc, packet[26] & 0xc0, 2);
-
-            crc = (packet[23] << 10) | (packet[24] << 2) | (packet[25] >> 6);
-
-            telem_pkt[23] = (crc >> 8)&0xff;
-            telem_pkt[24] = crc&0xff;
-
-            if (crc == crcxored)
-                telem_pkt[25] = 1;
-            else
-                telem_pkt[25] = 0;
-
-            if (pkt_len == 16)
-                {
-                    Telemetry.value[TELEM_DEVO_VOLT1] = ((telem_pkt[OMP_ADDR_LEN+3] << 8) + telem_pkt[OMP_ADDR_LEN+2])/100;
+    u8 telem_pkt[16];  // unscramble data
+    u16 V = 0;
+    if (NRF24L01_ReadReg(NRF24L01_07_STATUS) & BV(NRF24L01_07_RX_DR))
+        {  // a packet has been received
+            if (XN297_ReadEnhancedPayload(telem_pkt, OMP_PACKET_SIZE) == OMP_PACKET_SIZE)
+                {  // packet with good CRC and length
+                    V = ((telem_pkt[3] << 8) + telem_pkt[2]) / 100;
+                    last_good_v_lipo = V;
+                    Telemetry.value[TELEM_DEVO_VOLT1] = V;
                     update = omp_telem;
+                    telemetry_counter++;
                 }
-    
-            CC2500_Strobe(CC2500_SIDLE);
-            CC2500_Strobe(CC2500_SFRX);
-            CC2500_SetTxRxMode(TXRX_OFF);
-            break;
-        case 1:
-        	if( NRF24L01_ReadReg(NRF24L01_07_STATUS) & _BV(NRF24L01_07_RX_DR))
-					{ // a packet has been received
-						if(XN297_ReadEnhancedPayload(telem_pkt, OMP_PACKET_SIZE) == OMP_PACKET_SIZE)
-						{ // packet with good CRC and length
-							u16 v=((telem_pkt[3]<<8)+telem_pkt[2])/100;
-							last_good_v_lipo=v;
-                            Telemetry.value[TELEM_DEVO_VOLT1] = v;
-                            telemetry_counter++;
-						}
-						else
-						{ // As soon as the motor spins the telem packets are becoming really bad and the CRC throws most of them in error as it should but...
-
-							if(telem_pkt[0]==0x01 && telem_pkt[1]==0x00)
-    							{// the start of the packet looks ok...
-	    							u16 v=((telem_pkt[3]<<8)+telem_pkt[2])/100;
-		    						if(v<130 && v>60)
-			        					{ //voltage is less than 13V and more than 6V (3V/element)
-					        				u16 v1=v-last_good_v_lipo;
-							        		if(v1&0x8000) v1=-v1;
-									        if(v1<10) // the batt voltage is within 1V from a good reading...
-									            {
-                                                    Telemetry.value[TELEM_DEVO_VOLT1] = v;
-                                                    telemetry_counter++;
-									            }
-								        }
-							    }
-						}
-					    telem_packet_count++;
-					if(telem_packet_count>=100)
-    					{//LQI calculation
-	    					telem_packet_count = 0;
-		    				Telemetry.value[TELEM_DEVO_RPM2] = telemetry_counter;
-			    		}
-                    update = omp_telem;    
-                    }
-            break;
-    }
-
+            else
+                {  // As soon as the motor spins the telem packets are becoming really bad and the CRC throws most of them in error as it should but...
+                    if (telem_pkt[0] == 0x01 && telem_pkt[1] == 0x00)
+                        {  // the start of the packet looks ok...
+                            V = ((telem_pkt[3] << 8) + telem_pkt[2]) / 100;
+                            if (V < 130 && V > 60)
+                                {  // voltage is less than 13V and more than 6V (3V/element)
+                                    u16 v1 = V - last_good_v_lipo;
+                                    if (v1&0x8000) v1 = -v1;
+                                    if (v1 < 10)  // the batt voltage is within 1V from a good reading...
+                                        {
+                                            Telemetry.value[TELEM_DEVO_VOLT1] = V;
+                                            update = omp_telem;
+                                            telemetry_counter++;
+                                        }
+                                }
+                        }
+                }
+        }
+    if (telem_packet_count >= 100)
+        {  // LQI calculation
+            telem_packet_count = 0;
+            Telemetry.value[TELEM_DEVO_RPM1] = telemetry_counter;
+            telemetry_counter = 0;
+        }
+    telem_packet_count++;
+    NRF24L01_FlushRx();
+    NRF24L01_WriteReg(NRF24L01_00_CONFIG, 0);  // turn off 24l01
     if (update)
     {
-        while (*update) {
+        while (*update)
+        {
             TELEMETRY_SetUpdated(*update++);
         }
     }
@@ -282,23 +224,22 @@ static void omp_update_telemetry()
 
 static void OMP_send_packet(u8 bind)
 {
-    if (nrf_installed)
-        NRF24L01_SetTxRxMode(TXRX_OFF);	
-    CC2500_SetTxRxMode(TX_EN);
-
-    CLOCK_ResetWatchdog();
-    CLOCK_RunMixer();
-
     if (!bind)
     {
     memset(packet, 0x00, OMP_PACKET_SIZE);
     packet[0] = hopping_frequency_no;
-    
-    telm_req++;
-    telm_req %= OMP_NUM_RF_CHANNELS-1;			// Change telem RX channels every time
 
-    if (telm_req == 0)
-        packet[0] |= 0x40;
+    if (nrf_installed)
+        {
+            telm_req++;
+            telm_req %= OMP_NUM_RF_CHANNELS-1;  // Change telem RX channels every time
+            if (telm_req == 0)
+                {
+                    packet[0] |= 0x40;
+                    NRF24L01_WriteReg(NRF24L01_05_RF_CH, hopping_frequency[hopping_frequency_no]);
+                }
+        }
+
     CC2500_WriteReg(CC2500_23_FSCAL3, calibration_fscal3);
     CC2500_WriteReg(CC2500_24_FSCAL2, calibration_fscal2);
     CC2500_WriteReg(CC2500_25_FSCAL1, calibration[hopping_frequency_no]);
@@ -335,6 +276,10 @@ static void OMP_send_packet(u8 bind)
         packet[15] = 0x04;
     }
 
+    CC2500_SetTxRxMode(TX_EN);
+    CLOCK_ResetWatchdog();
+    CLOCK_RunMixer();
+
     XN297L_WriteEnhancedPayload(packet, OMP_PACKET_SIZE, telm_req != 0);   // ack/8packet
 
     if (tx_power != Model.tx_power)  // Keep transmit power updated
@@ -353,7 +298,8 @@ static u16 OMP_callback()
         fine = (s8)Model.proto_opts[PROTOOPTS_FREQFINE];
         CC2500_WriteReg(CC2500_0C_FSCTRL0, fine);
     }
-    switch (phase) {
+    switch (phase)
+    {
         case OMP_BIND:
             if (bind_counter == 0)
                 {
@@ -370,9 +316,9 @@ static u16 OMP_callback()
 
         case OMP_DATA:
             OMP_send_packet(0);
-                    phase = OMP_PACKET_SEND;
-                    timeout = 1250;
-                    tx_wait = 0;
+            phase = OMP_PACKET_SEND;
+            timeout = 1250;
+            tx_wait = 0;
             break;
 
         case OMP_PACKET_SEND:
@@ -388,50 +334,41 @@ static u16 OMP_callback()
                     break;
                 }
 
-                CC2500_Strobe(CC2500_SIDLE);
-                CC2500_SetTxRxMode(TXRX_OFF);
-                timeout = OMP_PACKET_PERIOD-1250-tx_wait;
+            CC2500_Strobe(CC2500_SIDLE);
+            CC2500_SetTxRxMode(TXRX_OFF);
+            timeout = OMP_PACKET_PERIOD-1250-tx_wait;
+            phase = OMP_DATA;
 
-                if (Model.proto_opts[PROTOOPTS_TELEMETRY])
-                    break;
-
-                switch (telm_req)
-                    {
-                        case 0:
-                            if (nrf_installed)
-                            {
-                                NRF24L01_WriteReg(NRF24L01_05_RF_CH, hopping_frequency[hopping_frequency_no-1]);
-                                NRF24L01_WriteReg(NRF24L01_07_STATUS, (1 << NRF24L01_07_RX_DR)    //reset the flag(s)
-												| (1 << NRF24L01_07_TX_DS)
-												| (1 << NRF24L01_07_MAX_RT));
-			                    NRF24L01_FlushRx();
-			                    NRF24L01_WriteReg(NRF24L01_00_CONFIG, (1 << NRF24L01_00_PWR_UP) | (1 << NRF24L01_00_PRIM_RX) );	// Start RX
-                            }
-                            else
-                                {
-                                    CC2500_Strobe(CC2500_SIDLE);
-                                    CC2500_SetTxRxMode(RX_EN);
-                                    CC2500_Strobe(CC2500_SFRX);
-                                    CC2500_Strobe(CC2500_SRX);
-                                }
-                            break;    
-                        case 1:
-                            omp_update_telemetry();
-                            timeout -= 50;
-                            break;
-                        default:
-                            break;
-                    }
+            if (nrf_installed == 0)
+                break;
+            switch (telm_req)
+                {
+                    case 0:
+                        NRF24L01_WriteReg(NRF24L01_07_STATUS, (1 << NRF24L01_07_RX_DR)  // reset the flag(s)
+                                            | (1 << NRF24L01_07_TX_DS)
+                                            | (1 << NRF24L01_07_MAX_RT));
+                        NRF24L01_FlushRx();
+                        NRF24L01_WriteReg(NRF24L01_00_CONFIG, (1 << NRF24L01_00_PWR_UP) | (1 << NRF24L01_00_PRIM_RX) );  // Start RX
+                        break;
+                    case 1:
+                       omp_update_telemetry();
+                        timeout -= 50;
+                       break;
+                    case 6:
+                        NRF24L01_WriteReg(NRF24L01_00_CONFIG, (1 << NRF24L01_00_PWR_UP) | (1 << NRF24L01_00_PRIM_RX) );  // bring NRF24L01 from power down
+                        break;
+                    default:
+                        break;
+                }
             break;
     }
-
     return timeout;
 }
 
 static void OMP_init()
 {
     // setup cc2500 for xn297L@250kbps emulation, scrambled, crc enabled
-    XN297L_Configure(XN297L_SCRAMBLED, XN297L_CRC, OMP_PACKET_SIZE+10);  // packet_size + 5byte address + 2 byte pcf + 2byte crc + 1byte preamble
+    XN297L_Configure(XN297_SCRAMBLED, XN297L_CRC, OMP_PACKET_SIZE+10);  // packet_size + 5byte address + 2 byte pcf + 2byte crc + 1byte preamble
     calibrate_rf_chans();
     CC2500_SetPower(tx_power);
 }
@@ -454,30 +391,40 @@ static void OMP_initialize_txid()
     rand32_r(&lfsr, 0);
     rx_tx_addr[4] = lfsr & 0xff;
     // channels
-     calc_fh_channels(OMP_NUM_RF_CHANNELS);
+    calc_fh_channels(OMP_NUM_RF_CHANNELS);
 }
+
+
 
 static void NRF_init()
 {
-	NRF24L01_Initialize();
-	NRF24L01_SetBitrate(NRF24L01_BR_250K);			// 250Kbps
-	XN297_Configure(BV(NRF24L01_00_EN_CRC));
-	XN297_SetRXAddr(rx_tx_addr, 5);				// Set the RX address
-	NRF24L01_SetTxRxMode(TXRX_OFF);				// Turn it off for now
-	NRF24L01_WriteReg(NRF24L01_11_RX_PW_P0, OMP_PACKET_SIZE + 4); // packet length +4 bytes of PCF+CRC
+    // Load most likely default NRF config
+    NRF24L01_FlushTx();
+    NRF24L01_FlushRx();
+    NRF24L01_WriteReg(NRF24L01_06_RF_SETUP, 0x20);      // 250Kbps
+    NRF24L01_WriteReg(NRF24L01_01_EN_AA,        0x00);  // No Auto Acknowldgement on all data pipes
+    NRF24L01_WriteReg(NRF24L01_02_EN_RXADDR,    0x01);  // Enable data pipe 0 only
+    NRF24L01_WriteReg(NRF24L01_03_SETUP_AW,     0x03);  // 5 bytes rx/tx address
+    NRF24L01_WriteReg(NRF24L01_04_SETUP_RETR,   0x00);  // no retransmits
+//    XN297_Configure(BV(NRF24L01_00_EN_CRC));            // xn297_crc was set by OMP_init()
+    XN297_SetRXAddr(rx_tx_addr, 5);                     // Set the RX address
+    NRF24L01_WriteReg(NRF24L01_1C_DYNPD, 0x00);         // Disable dynamic payload length on all pipes
+    NRF24L01_WriteReg(NRF24L01_1D_FEATURE, 0x01);       // Set feature bits off and enable the command NRF24L01_B0_TX_PYLD_NOACK
+    NRF24L01_WriteReg(NRF24L01_11_RX_PW_P0, OMP_PACKET_SIZE + 4);   // packet length +4 bytes of PCF+CRC
+    NRF24L01_WriteReg(NRF24L01_00_CONFIG, 0);                       // poweroff for now
 }
+
 
 static void initialize(u8 bind)
 {
     CLOCK_StopTimer();
     OMP_initialize_txid();
+    tx_power = Model.tx_power;
+    OMP_init();
 
     nrf_installed = (Transmitter.module_enable[NRF24L01].pin !=0);
     if (nrf_installed)  // has NRF24L01 installed
         NRF_init();
-
-    tx_power = Model.tx_power;
-    OMP_init();
 
     fine = (s8)Model.proto_opts[PROTOOPTS_FREQFINE];
     CC2500_WriteReg(CC2500_0C_FSCTRL0, fine);
@@ -521,7 +468,7 @@ uintptr_t OMP_Cmds(enum ProtoCmds cmd)
         case PROTOCMD_CURRENT_ID: return Model.fixed_id;
         case PROTOCMD_GETOPTIONS: return (uintptr_t)omp_opts;
         case PROTOCMD_TELEMETRYSTATE:
-            return (Model.proto_opts[PROTOOPTS_TELEMETRY] != TELEM_OFF ? PROTO_TELEM_ON : PROTO_TELEM_OFF);
+            return ((Transmitter.module_enable[NRF24L01].pin !=0)? PROTO_TELEM_ON : PROTO_TELEM_UNSUPPORTED);
         case PROTOCMD_TELEMETRYTYPE:
             return TELEM_DEVO;
         case PROTOCMD_CHANNELMAP: return AETRG;

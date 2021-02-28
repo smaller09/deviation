@@ -187,8 +187,6 @@ void XN297L_Configure(u8 scramble_en, u8 crc_en, u8 cc2500_packet_len)
     CC2500_WriteReg(CC2500_13_MDMCFG1,  0x03);   // Modem Configuration
     CC2500_WriteReg(CC2500_14_MDMCFG0,  0xA4);   // Modem Configuration
     CC2500_WriteReg(CC2500_15_DEVIATN,  0x62);   // Modem Deviation Setting
-    // CC2500_WriteReg(CC2500_16_MCSM2,    0x07);   // Main Radio Control State Machine Configuration
-    // CC2500_WriteReg(CC2500_17_MCSM1,    0x30);   // Main Radio Control State Machine Configuration
     CC2500_WriteReg(CC2500_18_MCSM0,    0x08);   // Main Radio Control State Machine Configuration
     CC2500_WriteReg(CC2500_19_FOCCFG,   0x1D);   // Frequency Offset Compensation Configuration
     CC2500_WriteReg(CC2500_1A_BSCFG,    0x1C);   // Bit Synchronization Configuration
@@ -200,7 +198,7 @@ void XN297L_Configure(u8 scramble_en, u8 crc_en, u8 cc2500_packet_len)
     CC2500_WriteReg(CC2500_25_FSCAL1,   0x00);   // Frequency Synthesizer Calibration
     CC2500_WriteReg(CC2500_26_FSCAL0,   0x11);   // Frequency Synthesizer Calibration
 
-    XN297L_SetScrambledMode(scramble_en);
+    XN297_SetScrambledMode(scramble_en);
     xn297_crc = crc_en;
 }
 
@@ -300,12 +298,7 @@ u16 crc16_update(u16 crc, u8 a, u8 bits)
     return crc;
 }
 
-void XN297L_SetScrambledMode(const u8 mode)
-{
-    xn297_scramble_enabled = mode;
-}
-
-u8 _xn297l_write_payload(const u8* msg, u8 len, u8* out)
+static u8 _xn297l_write_payload(const u8* msg, u8 len, u8* out)
 {
     u8 last = 0;
     u8 i;
@@ -341,11 +334,11 @@ u8 _xn297l_write_payload(const u8* msg, u8 len, u8* out)
     return last;
 }
 
-u8 _xn297l_write_enhancedpayload(const u8* msg, u8 len, u8* out, u8 noack)
+static u8 pid = 0;
+static u8 _xn297l_write_enhancedpayload(const u8* msg, u8 len, u8* out, u8 noack)
 {
         u8 scramble_index = 0;
         u8 last = 0;
-        static u8 pid = 0;
         u8 i;
         // address
         for ( i = 0; i < xn297_addr_len; ++i ) {

@@ -140,12 +140,7 @@ void XN297L_Configure(u8 scramble_en, u8 crc_en, u8 cc2500_packet_len);
 void XN297L_SetTXAddr(const u8* addr, u8 len);
 void XN297L_WritePayload(u8* msg, u8 len);
 void XN297L_SetChannel(u8 ch);
-void XN297L_SetScrambledMode(const u8 mode);
 void XN297L_WriteEnhancedPayload(u8* msg, u8 len, u8 noack);
-u8 _xn297l_write_enhancedpayload(const u8* msg, u8 len, u8* out, u8 noack);
-u8 _xn297l_write_payload(const u8* msg, u8 len, u8* out);
-#define XN297L_UNSCRAMBLED 0
-#define XN297L_SCRAMBLED 1
 #define XN297L_NOCRC 0
 #define XN297L_CRC 1
 
