@@ -173,23 +173,23 @@ static void omp_update_telemetry()
     static const u8 omp_telem[] = { TELEM_DEVO_VOLT1, TELEM_DEVO_RPM1, 0};  // use TELEM_DEVO_RPM1 for LQI
 
     // raw receive data    first byte should be 0x55 (last xn297l preamble word) and then 5 byte address
-    u8 telem_pkt[16];  // unscramble data
+
     u16 V = 0;
     if (NRF24L01_ReadReg(NRF24L01_07_STATUS) & BV(NRF24L01_07_RX_DR))
         {  // a packet has been received
             telemetry_counter++;
-            if (XN297_ReadEnhancedPayload(telem_pkt, OMP_PACKET_SIZE) == OMP_PACKET_SIZE)
+            if (XN297_ReadEnhancedPayload(packet, OMP_PACKET_SIZE) == OMP_PACKET_SIZE)
                 {  // packet with good CRC and length
-                    V = ((telem_pkt[3] << 8) + telem_pkt[2]) / 100;
+                    V = ((packet[3] << 8) + packet[2]) / 100;
                     last_good_v_lipo = V;
                     Telemetry.value[TELEM_DEVO_VOLT1] = V;
                     update = omp_telem;
                 }
             else
                 {  // As soon as the motor spins the telem packets are becoming really bad and the CRC throws most of them in error as it should but...
-                    if (telem_pkt[0] == 0x01 && telem_pkt[1] == 0x00)
+                    if (packet[0] == 0x01 && packet[1] == 0x00)
                         {  // the start of the packet looks ok...
-                            V = ((telem_pkt[3] << 8) + telem_pkt[2]) / 100;
+                            V = ((packet[3] << 8) + packet[2]) / 100;
                             if (V < 130 && V > 60)
                                 {  // voltage is less than 13V and more than 6V (3V/element)
                                     u16 v1 = V - last_good_v_lipo;
