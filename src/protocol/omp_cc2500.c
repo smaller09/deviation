@@ -66,7 +66,7 @@ static u8 telm_req = 0;
 static u16 tx_wait = 0;
 static u8 nrf_installed = 0;
 static u8 last_good_v_lipo = 0;
-static u8 telemetry_counter;
+static u8 telemetry_counter = 0;
 static u8 telem_packet_count = 0;
 
 enum{
@@ -177,13 +177,13 @@ static void omp_update_telemetry()
     u16 V = 0;
     if (NRF24L01_ReadReg(NRF24L01_07_STATUS) & BV(NRF24L01_07_RX_DR))
         {  // a packet has been received
+            telemetry_counter++;
             if (XN297_ReadEnhancedPayload(telem_pkt, OMP_PACKET_SIZE) == OMP_PACKET_SIZE)
                 {  // packet with good CRC and length
                     V = ((telem_pkt[3] << 8) + telem_pkt[2]) / 100;
                     last_good_v_lipo = V;
                     Telemetry.value[TELEM_DEVO_VOLT1] = V;
                     update = omp_telem;
-                    telemetry_counter++;
                 }
             else
                 {  // As soon as the motor spins the telem packets are becoming really bad and the CRC throws most of them in error as it should but...
@@ -198,19 +198,18 @@ static void omp_update_telemetry()
                                         {
                                             Telemetry.value[TELEM_DEVO_VOLT1] = V;
                                             update = omp_telem;
-                                            telemetry_counter++;
                                         }
                                 }
                         }
                 }
         }
+    telem_packet_count++;
     if (telem_packet_count >= 100)
         {  // LQI calculation
             telem_packet_count = 0;
             Telemetry.value[TELEM_DEVO_RPM1] = telemetry_counter;
             telemetry_counter = 0;
         }
-    telem_packet_count++;
     NRF24L01_FlushRx();
     NRF24L01_WriteReg(NRF24L01_00_CONFIG, 0);  // turn off 24l01
     if (update)
