@@ -61,4 +61,10 @@ enum PinConfigState {
 #include "iface_nrf24l01.h"
 #endif
 
+#if (defined PROTO_HAS_CC2500 || defined PROTO_HAS_NRF24L01)
+#include "iface_xn297emu.h"
+#endif
+
+
+
 #endif //_INTERFACE_H_

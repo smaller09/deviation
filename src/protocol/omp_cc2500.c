@@ -38,7 +38,6 @@
 #define OMP_NUM_RF_CHANNELS       8
 #define OMP_ADDR_LEN              5
 
-
 static const char * const omp_opts[] = {
   _tr_noop("Freq-Fine"),  "-127", "127", NULL,
   NULL
@@ -102,12 +101,10 @@ static u16 scale_channel(u8 ch, u16 destMin, u16 destMax)
 }
 
 #define GET_FLAG(ch, mask) (Channels[ch] > 0 ? mask : 0)
-
-
 // calibrate used RF channels for faster hopping
 static void calibrate_rf_chans()
 {
-    for (int c = 0; c < OMP_NUM_RF_CHANNELS; c++) {
+    for (u8 c = 0; c < OMP_NUM_RF_CHANNELS; c++) {
         CLOCK_ResetWatchdog();
         CC2500_Strobe(CC2500_SIDLE);
         XN297L_SetChannel(hopping_frequency[c]);
@@ -163,7 +160,6 @@ static void calc_fh_channels(u8 num_ch)
             hopping_frequency[idx++] = next_ch;  // find hopping frequency
     }
 }
-
 
 static void omp_update_telemetry()
 {
@@ -288,7 +284,6 @@ static void OMP_send_packet(u8 bind)
     }
 }
 
-
 static u16 OMP_callback()
 {
     u16 timeout = OMP_PACKET_PERIOD;
@@ -364,6 +359,26 @@ static u16 OMP_callback()
     return timeout;
 }
 
+static void NRF_init()
+{
+        // Load most likely default NRF config
+    NRF24L01_FlushTx();
+    NRF24L01_FlushRx();
+    NRF24L01_WriteReg(NRF24L01_06_RF_SETUP, 0x20);      // 250Kbps
+    NRF24L01_WriteReg(NRF24L01_01_EN_AA,        0x00);  // No Auto Acknowldgement on all data pipes
+    NRF24L01_WriteReg(NRF24L01_02_EN_RXADDR,    0x01);  // Enable data pipe 0 only
+    NRF24L01_WriteReg(NRF24L01_03_SETUP_AW,     0x03);  // 5 bytes rx/tx address
+    NRF24L01_WriteReg(NRF24L01_04_SETUP_RETR,   0x00);  // no retransmits
+    NRF24L01_WriteReg(NRF24L01_1C_DYNPD, 0x00);         // Disable dynamic payload length on all pipes
+    NRF24L01_WriteReg(NRF24L01_1D_FEATURE, 0x01);
+
+    XN297_SetScrambledMode(XN297_SCRAMBLED);
+    XN297_Configure(BV(NRF24L01_00_EN_CRC));            // xn297_crc was set by OMP_init()
+    XN297_SetRXAddr(rx_tx_addr, OMP_ADDR_LEN);                     // Set the RX address
+    NRF24L01_WriteReg(NRF24L01_11_RX_PW_P0, OMP_PACKET_SIZE + 4);   // packet length +4 bytes of PCF+CRC
+    NRF24L01_WriteReg(NRF24L01_00_CONFIG, 0);                       // poweroff for now
+}
+
 static void OMP_init()
 {
     // setup cc2500 for xn297L@250kbps emulation, scrambled, crc enabled
@@ -392,27 +407,6 @@ static void OMP_initialize_txid()
     // channels
     calc_fh_channels(OMP_NUM_RF_CHANNELS);
 }
-
-
-
-static void NRF_init()
-{
-    // Load most likely default NRF config
-    NRF24L01_FlushTx();
-    NRF24L01_FlushRx();
-    NRF24L01_WriteReg(NRF24L01_06_RF_SETUP, 0x20);      // 250Kbps
-    NRF24L01_WriteReg(NRF24L01_01_EN_AA,        0x00);  // No Auto Acknowldgement on all data pipes
-    NRF24L01_WriteReg(NRF24L01_02_EN_RXADDR,    0x01);  // Enable data pipe 0 only
-    NRF24L01_WriteReg(NRF24L01_03_SETUP_AW,     0x03);  // 5 bytes rx/tx address
-    NRF24L01_WriteReg(NRF24L01_04_SETUP_RETR,   0x00);  // no retransmits
-//    XN297_Configure(BV(NRF24L01_00_EN_CRC));            // xn297_crc was set by OMP_init()
-    XN297_SetRXAddr(rx_tx_addr, 5);                     // Set the RX address
-    NRF24L01_WriteReg(NRF24L01_1C_DYNPD, 0x00);         // Disable dynamic payload length on all pipes
-    NRF24L01_WriteReg(NRF24L01_1D_FEATURE, 0x01);       // Set feature bits off and enable the command NRF24L01_B0_TX_PYLD_NOACK
-    NRF24L01_WriteReg(NRF24L01_11_RX_PW_P0, OMP_PACKET_SIZE + 4);   // packet length +4 bytes of PCF+CRC
-    NRF24L01_WriteReg(NRF24L01_00_CONFIG, 0);                       // poweroff for now
-}
-
 
 static void initialize(u8 bind)
 {

@@ -116,7 +116,7 @@ static void send_packet(u8 bind)
 
     NRF24L01_WriteReg(NRF24L01_07_STATUS, 0x70);
     NRF24L01_FlushTx();
-    XN297_WriteEnhancedPayload(packet, PAYLOAD_SIZE, 0, 0x3c7d);
+    XN297_WriteEnhancedPayload(packet, PAYLOAD_SIZE, 0);
     
     if (tx_power != Model.tx_power) {
         //Keep transmit power updated
