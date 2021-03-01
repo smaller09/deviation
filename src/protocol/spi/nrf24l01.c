@@ -51,6 +51,7 @@ static void CS_LO() {
 void NRF24L01_Initialize()
 {
     rf_setup = 0x0F;
+    XN297_SetScrambledMode(XN297_SCRAMBLED);
 }
 
 u8 NRF24L01_WriteReg(u8 reg, u8 data)
