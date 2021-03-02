@@ -432,7 +432,7 @@ static void initialize(u8 bind)
             CC2500_Strobe(CC2500_SCAL);
             usleep(900);
             CC2500_Strobe(CC2500_SIDLE);
-            memset(packet, 0x00, OMP_PACKET_SIZE);
+            // memset(packet, 0x00, OMP_PACKET_SIZE);
             memcpy(packet, "BND", 3);
             memcpy(&packet[3], rx_tx_addr, 5);
             memcpy(&packet[8], hopping_frequency, 8);
